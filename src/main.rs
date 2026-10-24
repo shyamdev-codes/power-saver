@@ -6,8 +6,6 @@ pub mod persistence;
 pub mod power;
 pub mod telemetry;
 
-// UI and Win32 bindings are Windows-only.
-// On Linux the binary runs headless (daemon mode).
 #[cfg(target_os = "windows")]
 pub mod ui;
 #[cfg(target_os = "windows")]
@@ -23,55 +21,71 @@ use std::ptr::{null, null_mut};
 
 #[cfg(target_os = "windows")]
 use app::AppState;
-#[cfg(target_os = "windows")]
 use power::PowerManager;
 #[cfg(target_os = "windows")]
 use ui::{wnd_proc, GLOBAL_APP};
 #[cfg(target_os = "windows")]
 use win32::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  WINDOWS ENTRY POINT  (full GUI + tray)
-// ─────────────────────────────────────────────────────────────────────────────
-#[cfg(target_os = "windows")]
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-
-    // 1. Standalone CLI Operations
+fn handle_cli_args(args: &[String]) -> bool {
     if args.iter().any(|a| a == "--restore" || a == "-Restore") {
         PowerManager::set_limit(100);
-        return;
+        return true;
     }
-
     if args.iter().any(|a| a == "--autostart" || a == "-Autostart") {
         if let Ok(exe_path) = std::env::current_exe() {
             let _ = persistence::set_autostart_enabled(true, &exe_path);
         }
-        return;
+        return true;
     }
-
     if args.iter().any(|a| a == "--remove-autostart" || a == "-RemoveAutostart") {
         if let Ok(exe_path) = std::env::current_exe() {
             let _ = persistence::set_autostart_enabled(false, &exe_path);
         }
-        return;
+        return true;
     }
-
     if args.iter().any(|a| a == "--uninstall" || a == "-Uninstall") {
         if let Ok(exe_path) = std::env::current_exe() {
             let _ = persistence::set_autostart_enabled(false, &exe_path);
         }
         PowerManager::set_limit(100);
+        return true;
+    }
+    false
+}
+
+fn ensure_autostart_registered() {
+    if !persistence::is_autostart_enabled()
+        && let Ok(exe_path) = std::env::current_exe() {
+            let _ = persistence::set_autostart_enabled(true, &exe_path);
+        }
+}
+
+fn resolve_root_dir() -> PathBuf {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    if let Some(parent) = exe_dir.parent()
+        && let Some(grand) = parent.parent()
+            && grand.join("Cargo.toml").exists() {
+                return grand.to_path_buf();
+            }
+    exe_dir
+}
+
+#[cfg(target_os = "windows")]
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if handle_cli_args(&args) {
         return;
     }
 
-    // 2. Single-Instance Check & Activation:
-    // If the governor is already running in the background and the user clicks the .exe,
-    // activate and bring up the existing GUI window with live charts and data.
     let mutex_name = to_wide("Local\\AdaptivePowerGovernorSingleInstanceMutex");
     let class_name = to_wide("AdaptivePowerGovernorRustClass");
     let _h_mutex = unsafe { CreateMutexW(null_mut(), 0, mutex_name.as_ptr()) };
-    if unsafe { GetLastError() } == 183 /* ERROR_ALREADY_EXISTS */ {
+    if unsafe { GetLastError() } == 183 {
         unsafe {
             let existing_hwnd = FindWindowW(class_name.as_ptr(), null());
             if !existing_hwnd.is_null() && IsWindow(existing_hwnd) != 0 {
@@ -86,39 +100,11 @@ fn main() {
         }
     }
 
-    // 3. First-Time Run Automation:
-    // Check if the auto-runner is configured in the system.
-    // If not found, automatically register Windows boot startup so next time user logs in,
-    // it starts automatically and silently in the background without opening the window!
-    if !persistence::is_autostart_enabled() {
-        if let Ok(exe_path) = std::env::current_exe() {
-            let _ = persistence::set_autostart_enabled(true, &exe_path);
-        }
-    }
+    ensure_autostart_registered();
 
     let is_silent = args.iter().any(|a| a == "--silent" || a == "-Silent");
+    let root_dir = resolve_root_dir();
 
-    // 4. Locate directory for persistent data files
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let root_dir = if let Some(parent) = exe_dir.parent() {
-        if let Some(grand) = parent.parent() {
-            if grand.join("Cargo.toml").exists() {
-                grand.to_path_buf()
-            } else {
-                exe_dir.clone()
-            }
-        } else {
-            exe_dir.clone()
-        }
-    } else {
-        exe_dir.clone()
-    };
-
-    // 5. Initialize App State (auto-creates recovery_journal.json and daily_energy_log.csv on first run)
     let app = AppState::new(&root_dir);
     if let Ok(mut lock) = GLOBAL_APP.lock() {
         *lock = Some(app);
@@ -126,8 +112,6 @@ fn main() {
 
     unsafe {
         let h_instance = GetModuleHandleW(null());
-
-        // Initialize high DPI awareness for crisp font rendering
         init_dpi_awareness();
 
         let wc = WNDCLASSEXW {
@@ -137,7 +121,7 @@ fn main() {
             cb_cls_extra: 0,
             cb_wnd_extra: 0,
             h_instance,
-            h_icon: LoadIconW(null_mut(), 32512 as *const u16), // IDI_APPLICATION
+            h_icon: LoadIconW(null_mut(), 32512 as *const u16),
             h_cursor: null_mut(),
             hbr_background: null_mut(),
             lpsz_menu_name: null(),
@@ -185,13 +169,9 @@ fn main() {
             return;
         }
 
-        // Enable Windows 10/11 immersive dark title bar for seamless aesthetics
         enable_dark_title_bar(hwnd);
-
-        // Setup 1000ms periodic timer for continuous autonomous telemetry and power management
         SetTimer(hwnd, 1, 1000, None);
 
-        // Setup System Tray Icon
         let mut nid: NOTIFYICONDATAW = zeroed();
         nid.cb_size = size_of::<NOTIFYICONDATAW>() as u32;
         nid.hwnd = hwnd;
@@ -217,7 +197,6 @@ fn main() {
 
         Shell_NotifyIconW(NIM_ADD, &mut nid);
 
-        // If launched normally (not --silent), show window; if silent (boot auto-start), stay in tray
         if !is_silent {
             ShowWindow(hwnd, SW_SHOW);
             ShowWindow(hwnd, SW_SHOWNORMAL);
@@ -225,89 +204,43 @@ fn main() {
             SetForegroundWindow(hwnd);
         }
 
-        // Win32 Message Loop
         let mut msg: MSG = zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
 
-        // Cleanup on Exit
         KillTimer(hwnd, 1);
         Shell_NotifyIconW(NIM_DELETE, &mut nid);
 
-        // Mandatory Safety: Restore 100% baseline upon termination
         PowerManager::set_limit(100);
-        if let Ok(mut lock) = GLOBAL_APP.lock() {
-            if let Some(app) = lock.as_mut() {
+        if let Ok(mut lock) = GLOBAL_APP.lock()
+            && let Some(app) = lock.as_mut() {
                 app.flush_csv();
                 app.governor.current_state = governor::PowerState::Boost100;
                 app.update_journal("Default-100", "Restored-100%");
             }
-        }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  LINUX ENTRY POINT  (headless daemon — GUI not yet implemented)
-// ─────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
 fn main() {
-    use app::AppState;
-    use power::PowerManager;
-
     let args: Vec<String> = std::env::args().collect();
-
-    // CLI operations — same flags as Windows
-    if args.iter().any(|a| a == "--restore" || a == "-Restore") {
-        PowerManager::set_limit(100);
-        return;
-    }
-    if args.iter().any(|a| a == "--autostart" || a == "-Autostart") {
-        if let Ok(exe) = std::env::current_exe() {
-            let _ = persistence::set_autostart_enabled(true, &exe);
-        }
-        return;
-    }
-    if args.iter().any(|a| a == "--remove-autostart" || a == "-RemoveAutostart") {
-        if let Ok(exe) = std::env::current_exe() {
-            let _ = persistence::set_autostart_enabled(false, &exe);
-        }
-        return;
-    }
-    if args.iter().any(|a| a == "--uninstall" || a == "-Uninstall") {
-        if let Ok(exe) = std::env::current_exe() {
-            let _ = persistence::set_autostart_enabled(false, &exe);
-        }
-        PowerManager::set_limit(100);
+    if handle_cli_args(&args) {
         return;
     }
 
-    // Auto-register for boot autostart on first run
-    if !persistence::is_autostart_enabled() {
-        if let Ok(exe) = std::env::current_exe() {
-            let _ = persistence::set_autostart_enabled(true, &exe);
-        }
-    }
+    ensure_autostart_registered();
 
-    // Locate data directory (same logic as Windows)
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    // Initialize app state
+    let exe_dir = resolve_root_dir();
     let mut app = AppState::new(&exe_dir);
-    let verbose  = args.iter().any(|a| a == "--verbose" || a == "-v");
+    let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
 
     println!("Adaptive Power Governor — Linux Daemon");
     println!("System : {}", app.system_name);
     println!("CPU    : {} ({} cores, {} MHz max)", app.cpu_name, app.core_count, app.max_mhz);
-    println!("Running autonomously. Use Ctrl+C to exit and restore 100%.");
-    println!();
+    println!("Running autonomously. Press Ctrl+C to exit.");
 
-    // Safety: restore 100% on Ctrl+C via a simple signal flag
-    // (Production: use the `ctrlc` crate or signal-hook for proper cleanup)
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
         app.tick();
@@ -326,18 +259,15 @@ fn main() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  WINDOWS-ONLY HELPERS
-// ─────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "windows")]
-unsafe fn enable_dark_title_bar(hwnd: HWND) {
+fn enable_dark_title_bar(hwnd: HWND) {
     unsafe {
-        let h_mod = LoadLibraryA(b"dwmapi.dll\0".as_ptr());
+        let h_mod = LoadLibraryA(c"dwmapi.dll".as_ptr() as *const u8);
         if !h_mod.is_null() {
-            let p_dwm = GetProcAddress(h_mod, b"DwmSetWindowAttribute\0".as_ptr());
+            let p_dwm = GetProcAddress(h_mod, c"DwmSetWindowAttribute".as_ptr() as *const u8);
             if !p_dwm.is_null() {
                 let set_attr: unsafe extern "system" fn(HWND, u32, *const c_void, u32) -> i32 =
-                    std::mem::transmute(p_dwm);
+                    std::mem::transmute::<*mut c_void, _>(p_dwm);
                 let dark: i32 = 1;
                 let _ = set_attr(hwnd, 20, &dark as *const i32 as *const c_void, 4);
                 let _ = set_attr(hwnd, 19, &dark as *const i32 as *const c_void, 4);
@@ -347,22 +277,23 @@ unsafe fn enable_dark_title_bar(hwnd: HWND) {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn init_dpi_awareness() {
+fn init_dpi_awareness() {
     unsafe {
-        let h_user = LoadLibraryA(b"user32.dll\0".as_ptr());
+        let h_user = LoadLibraryA(c"user32.dll".as_ptr() as *const u8);
         if !h_user.is_null() {
-            let p_ctx = GetProcAddress(h_user, b"SetProcessDpiAwarenessContext\0".as_ptr());
+            let p_ctx = GetProcAddress(h_user, c"SetProcessDpiAwarenessContext".as_ptr() as *const u8);
             if !p_ctx.is_null() {
-                let set_ctx: unsafe extern "system" fn(isize) -> i32 = std::mem::transmute(p_ctx);
-                let _ = set_ctx(-4); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+                let set_ctx: unsafe extern "system" fn(isize) -> i32 =
+                    std::mem::transmute::<*mut c_void, _>(p_ctx);
+                let _ = set_ctx(-4);
             } else {
-                let p_dpi = GetProcAddress(h_user, b"SetProcessDPIAware\0".as_ptr());
+                let p_dpi = GetProcAddress(h_user, c"SetProcessDPIAware".as_ptr() as *const u8);
                 if !p_dpi.is_null() {
-                    let set_dpi: unsafe extern "system" fn() -> i32 = std::mem::transmute(p_dpi);
+                    let set_dpi: unsafe extern "system" fn() -> i32 =
+                        std::mem::transmute::<*mut c_void, _>(p_dpi);
                     let _ = set_dpi();
                 }
             }
         }
     }
 }
-

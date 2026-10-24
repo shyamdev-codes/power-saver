@@ -4,6 +4,11 @@ use crate::app::{AppState, SettingsActiveField};
 use crate::ui::theme::*;
 use crate::win32::*;
 
+/// Renders the full application UI into the provided device context.
+///
+/// # Safety
+/// `hdc` must be a valid GDI device context obtained from `BeginPaint` or `GetDC`.
+/// All Win32 GDI calls within this function depend on a live window and valid DC handle.
 pub unsafe fn render_ui(hdc: HDC, app: &AppState) {
     let width = 960;
     let height = 520;
@@ -500,8 +505,8 @@ pub unsafe fn render_ui(hdc: HDC, app: &AppState) {
         // =========================================================================
         // SETTINGS MODAL OVERLAY (Custom Native Input Fields: Currency & Unit Price)
         // =========================================================================
-        if app.is_settings_open {
-            if let Some(draft) = &app.settings_draft {
+        if app.is_settings_open
+            && let Some(draft) = &app.settings_draft {
                 // 1. Semi-transparent / Darkened Backdrop
                 let dim_brush = CreateSolidBrush(rgb(5, 10, 18));
                 let rc_dim = RECT { left: 0, top: 0, right: width, bottom: height };
@@ -667,7 +672,6 @@ pub unsafe fn render_ui(hdc: HDC, app: &AppState) {
                 let sbtn_str = to_wide("✓ Save Settings");
                 DrawTextW(mem_dc, sbtn_str.as_ptr(), -1, &mut rc_sbtn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             }
-        }
 
         // Blit backbuffer to screen
         BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);

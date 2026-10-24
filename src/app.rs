@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::governor::{AutonomousGovernor, PowerState};
 use crate::persistence::{
     flush_csv, load_today_base, save_app_settings, update_recovery_journal, AppSettings,
+    CsvLogStats,
 };
 use crate::power::PowerManager;
 use crate::telemetry::HardwareTelemetry;
@@ -36,7 +37,6 @@ pub struct AppState {
     pub eco_seconds: u64,
     pub total_watt_seconds_saved: f64,
 
-    // Live display metrics
     pub current_load: f64,
     pub current_mhz: u32,
     pub live_watts: f64,
@@ -45,11 +45,9 @@ pub struct AppState {
     pub status_headline: String,
     pub status_subtext: String,
 
-    // History for 60-point chart
     pub live_watts_history: Vec<f64>,
     pub unthrottled_history: Vec<f64>,
 
-    // Persistence baseline for today
     pub today_base_wh: f64,
     pub today_base_active_secs: u64,
     pub today_base_eco_secs: u64,
@@ -64,14 +62,14 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[must_use]
     pub fn new(base_dir: &Path) -> Self {
         let system_name = HardwareTelemetry::read_system_model();
         let (cpu_name, detected_mhz) = HardwareTelemetry::read_cpu_info();
         let core_count = HardwareTelemetry::read_core_count();
 
-        // Scale baseline power model dynamically based on actual core count
-        let estimated_tdp = (core_count as f64 * 12.0).clamp(35.0, 150.0);
-        let idle_base_watts = (core_count as f64 * 1.5 + 4.0).clamp(8.0, 30.0);
+        let estimated_tdp = (f64::from(core_count) * 12.0).clamp(35.0, 150.0);
+        let idle_base_watts = (f64::from(core_count) * 1.5 + 4.0).clamp(8.0, 30.0);
 
         let max_mhz = if detected_mhz > 0 { detected_mhz } else { 3000 };
 
@@ -83,7 +81,7 @@ impl AppState {
         let (today_base_wh, today_base_active_secs, today_base_eco_secs) =
             load_today_base(&log_file_path);
 
-        let initial_mhz = ((max_mhz as f64) * 0.70).round() as u32;
+        let initial_mhz = (f64::from(max_mhz) * 0.70).round() as u32;
 
         let app = Self {
             system_name,
@@ -119,12 +117,12 @@ impl AppState {
 
         PowerManager::set_limit(70);
         app.update_journal("Eco-70", "Active");
-        // Auto-generate daily energy log immediately on startup if not present
         app.flush_csv();
         app
     }
 
-    pub fn current_limit(&self) -> u32 {
+    #[must_use]
+    pub const fn current_limit(&self) -> u32 {
         self.governor.current_state.limit_percent()
     }
 
@@ -133,7 +131,6 @@ impl AppState {
         self.task_count = HardwareTelemetry::count_processes();
         self.current_load = self.telemetry.sample_cpu_load();
 
-        // 1. Read REAL live processor clock from hardware registers via CallNtPowerInformation
         if let Some((cur_hw_mhz, max_hw_mhz)) =
             PowerManager::get_live_processor_mhz(self.core_count)
         {
@@ -144,12 +141,10 @@ impl AppState {
                 self.max_mhz = max_hw_mhz;
             }
         } else {
-            // Proportional fallback based on active limit percentage
-            let ratio = self.current_limit() as f64 / 100.0;
-            self.current_mhz = ((self.max_mhz as f64) * ratio).round() as u32;
+            let ratio = f64::from(self.current_limit()) / 100.0;
+            self.current_mhz = (f64::from(self.max_mhz) * ratio).round() as u32;
         }
 
-        // 2. Physics-based dynamic power estimation
         let util_fraction = (self.current_load / 100.0).clamp(0.0, 1.0);
         let live_v = if self.governor.current_state == PowerState::Boost100 {
             1.35
@@ -157,7 +152,7 @@ impl AppState {
             1.00
         };
         let live_freq_ratio = if self.max_mhz > 0 {
-            (self.current_mhz as f64 / self.max_mhz as f64).clamp(0.2, 1.2)
+            (f64::from(self.current_mhz) / f64::from(self.max_mhz)).clamp(0.2, 1.2)
         } else {
             1.0
         };
@@ -178,7 +173,6 @@ impl AppState {
             self.eco_seconds += 1;
         }
 
-        // 3. Evaluate Autonomous Governor
         let transition = self.governor.evaluate(self.current_load);
         if transition.state_changed {
             let limit = transition.new_state.limit_percent();
@@ -188,30 +182,28 @@ impl AppState {
         self.status_headline = transition.headline;
         self.status_subtext = transition.subtext;
 
-        // 4. Push to rolling history buffers
         self.live_watts_history.remove(0);
         self.live_watts_history.push(self.live_watts);
 
         self.unthrottled_history.remove(0);
         self.unthrottled_history.push(self.unthrottled_watts);
 
-        // 5. Auto-flush CSV log every 60 seconds
-        if self.session_seconds % 60 == 0 {
+        if self.session_seconds.is_multiple_of(60) {
             self.flush_csv();
         }
     }
 
     pub fn flush_csv(&self) {
-        flush_csv(
-            &self.log_file_path,
-            self.today_base_wh,
-            self.total_watt_seconds_saved,
-            self.settings.tariff_per_kwh,
-            self.today_base_active_secs,
-            self.session_seconds,
-            self.today_base_eco_secs,
-            self.eco_seconds,
-        );
+        let stats = CsvLogStats {
+            today_base_wh: self.today_base_wh,
+            total_watt_seconds_saved: self.total_watt_seconds_saved,
+            tariff_per_kwh: self.settings.tariff_per_kwh,
+            today_base_active_secs: self.today_base_active_secs,
+            session_seconds: self.session_seconds,
+            today_base_eco_secs: self.today_base_eco_secs,
+            eco_seconds: self.eco_seconds,
+        };
+        flush_csv(&self.log_file_path, &stats);
     }
 
     pub fn update_journal(&self, profile: &str, status: &str) {
@@ -286,7 +278,6 @@ impl AppState {
         if let Some(draft) = self.settings_draft.as_mut() {
             draft.error_msg = None;
             if c == '\t' {
-                // Tab toggles between Currency and Unit Price
                 draft.active_field = match draft.active_field {
                     SettingsActiveField::Currency => SettingsActiveField::UnitPrice,
                     SettingsActiveField::UnitPrice => SettingsActiveField::Currency,
@@ -294,7 +285,6 @@ impl AppState {
                 return;
             }
             if c == '\x08' {
-                // Backspace deletes previous character
                 match draft.active_field {
                     SettingsActiveField::Currency => {
                         draft.currency.pop();
@@ -313,13 +303,10 @@ impl AppState {
                         }
                     }
                     SettingsActiveField::UnitPrice => {
-                        if (c.is_ascii_digit() || c == '.') && draft.unit_price.chars().count() < 8 {
-                            if c == '.' && draft.unit_price.contains('.') {
-                                // Ignore redundant decimal dot
-                            } else {
+                        if (c.is_ascii_digit() || c == '.') && draft.unit_price.chars().count() < 8
+                            && !(c == '.' && draft.unit_price.contains('.')) {
                                 draft.unit_price.push(c);
                             }
-                        }
                     }
                 }
             }
@@ -332,7 +319,6 @@ impl AppState {
         }
         match key {
             0x09 => {
-                // VK_TAB
                 if let Some(draft) = self.settings_draft.as_mut() {
                     draft.active_field = match draft.active_field {
                         SettingsActiveField::Currency => SettingsActiveField::UnitPrice,
@@ -341,11 +327,9 @@ impl AppState {
                 }
             }
             0x0D => {
-                // VK_RETURN
                 self.save_settings_from_draft();
             }
             0x1B => {
-                // VK_ESCAPE
                 self.close_settings();
             }
             _ => {}
@@ -354,30 +338,22 @@ impl AppState {
 
     pub fn handle_click(&mut self, x: i32, y: i32) {
         if !self.is_settings_open {
-            // Header [ ⚙ Settings ] button: X: 510..636, Y: 14..48
             if (510..=636).contains(&x) && (14..=48).contains(&y) {
                 self.open_settings();
                 return;
             }
-            // Energy section [ at .../unit ✎ ] link: X: 240..456, Y: 180..204
             if (240..=456).contains(&x) && (180..=204).contains(&y) {
                 self.open_settings();
-                return;
             }
         } else {
-            // Settings Modal bounds: X: 200..760, Y: 70..430
             if !(200..=760).contains(&x) || !(70..=430).contains(&y) {
                 self.close_settings();
                 return;
             }
-
-            // [ × Close ] button: X: 700..744, Y: 82..118
             if (700..=744).contains(&x) && (82..=118).contains(&y) {
                 self.close_settings();
                 return;
             }
-
-            // Currency input field click: X: 230..730, Y: 168..210
             if (230..=730).contains(&x) && (168..=210).contains(&y) {
                 if let Some(draft) = self.settings_draft.as_mut() {
                     draft.active_field = SettingsActiveField::Currency;
@@ -385,8 +361,6 @@ impl AppState {
                 }
                 return;
             }
-
-            // Unit Price input field click: X: 230..730, Y: 256..298
             if (230..=730).contains(&x) && (256..=298).contains(&y) {
                 if let Some(draft) = self.settings_draft.as_mut() {
                     draft.active_field = SettingsActiveField::UnitPrice;
@@ -394,17 +368,12 @@ impl AppState {
                 }
                 return;
             }
-
-            // [ Cancel ] button: X: 350..470, Y: 356..398
             if (350..=470).contains(&x) && (356..=398).contains(&y) {
                 self.close_settings();
                 return;
             }
-
-            // [ ✓ Save Settings ] button: X: 490..730, Y: 356..398
             if (490..=730).contains(&x) && (356..=398).contains(&y) {
                 self.save_settings_from_draft();
-                return;
             }
         }
     }
