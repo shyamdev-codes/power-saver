@@ -9,6 +9,14 @@ An ultra-lightweight, zero-bloat background governor written in pure **Rust** th
 
 ---
 
+## 🖥️ UI Preview
+
+![Adaptive Power Governor UI](docs/preview.png)
+
+*Lightweight native Win32 dark interface featuring real-time CPU telemetry, live frequency & power draw charts, and energy equation tracking.*
+
+---
+
 ## 💡 Why Adaptive Power Governor?
 
 Modern operating system schedulers often ramp CPUs to peak boost clocks for minor background tasks (file indexing, browser background tabs, telemetry). This causes:

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Adaptive Power Governor — UI Preview</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:#0B131F; --card-bg:#111C2D; --card-border:#1E2E45; --tile-bg:#162338;
+      --canvas-bg:#0D1624; --insight-bg:#131F31; --insight-border:#253854; --divider:#1A283C;
+      --text-title:#F8FAFC; --text-primary:#E2E8F0; --text-label:#94A3B8; --accent-blue:#60A5FA;
+      --emerald:#10B981; --emerald-bg:#064E3B; --emerald-border:#059669; --card-emerald-bg:#0C1C18;
+      --amber:#F59E0B; --amber-bg:#78350F; --amber-border:#92400E; --card-amber-bg:#1C160E;
+      --cyan:#38BDF8; --cyan-bg:#0C4A6E; --cyan-border:#0E7490; --card-cyan-bg:#0A1C26;
+    }
+    body { background:#060d18; display:flex; align-items:center; justify-content:center; min-height:100vh; font-family:'Inter','Segoe UI',system-ui,sans-serif; padding:32px 16px; }
+    .window { width:960px; height:520px; background:var(--bg); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 32px 80px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.06); flex-shrink:0; }
+    .header { display:flex; align-items:center; padding:12px 20px 10px; gap:12px; flex-shrink:0; }
+    .header-info { flex:1; }
+    .header-info h1 { font-size:18px; font-weight:800; color:var(--text-title); letter-spacing:.04em; line-height:1.2; }
+    .header-info p { font-size:11px; color:var(--text-label); margin-top:2px; }
+    .btn-settings { padding:6px 14px; background:var(--tile-bg); border:1px solid var(--card-border); border-radius:8px; font-size:12px; font-weight:700; color:var(--text-primary); white-space:nowrap; }
+    .badge-pill { padding:6px 16px; border-radius:10px; font-size:11.5px; font-weight:700; letter-spacing:.03em; white-space:nowrap; background:var(--emerald-bg); color:var(--emerald); border:1px solid #059669; }
+    .body { flex:1; display:flex; gap:16px; padding:0 20px; overflow:hidden; min-height:0; }
+    .card { background:var(--card-bg); border:1px solid var(--card-border); border-radius:10px; padding:12px 16px; display:flex; flex-direction:column; gap:8px; overflow:hidden; }
+    .card-left { flex:0 0 450px; }
+    .card-right { flex:1; }
+    .section-row { display:flex; align-items:center; justify-content:space-between; }
+    .section-title { font-size:11px; font-weight:700; color:var(--text-label); letter-spacing:.06em; text-transform:uppercase; }
+    .realtime-tag { font-size:10.5px; font-weight:700; color:var(--emerald); }
+    .metric-tiles { display:flex; gap:8px; }
+    .metric-tile { flex:1; background:var(--tile-bg); border:1px solid var(--card-border); border-radius:7px; padding:8px 4px 6px; text-align:center; }
+    .metric-val { font-size:18px; font-weight:700; line-height:1.1; }
+    .metric-lbl { font-size:8.5px; font-weight:700; color:var(--text-label); letter-spacing:.06em; margin-top:3px; }
+    .divider { height:1px; background:var(--divider); margin:0 -16px; }
+    .eq-header { display:flex; align-items:center; justify-content:space-between; }
+    .eq-today { font-size:11px; font-weight:600; color:var(--emerald); }
+    .eq-row { display:flex; align-items:center; gap:4px; }
+    .eq-card { flex:1; border-radius:7px; padding:6px 4px 5px; text-align:center; }
+    .eq-amber { background:var(--card-amber-bg); border:1px solid var(--amber-border); }
+    .eq-green { background:var(--card-emerald-bg); border:1px solid var(--emerald-border); }
+    .eq-cyan  { background:var(--card-cyan-bg); border:1px solid var(--cyan-border); }
+    .eq-val { font-size:15px; font-weight:700; line-height:1.1; }
+    .eq-lbl { font-size:7.5px; font-weight:700; color:var(--text-title); letter-spacing:.05em; margin-top:2px; }
+    .eq-sub { font-size:7px; font-weight:500; margin-top:1px; }
+    .eq-op  { font-size:18px; font-weight:700; color:var(--text-label); padding:0 2px; flex-shrink:0; }
+    .runtime { font-size:11px; font-weight:600; color:var(--text-title); }
+    .insight { flex:1; background:var(--insight-bg); border:1px solid var(--insight-border); border-radius:7px; padding:8px 12px; display:flex; flex-direction:column; gap:4px; overflow:hidden; min-height:0; }
+    .insight-head { font-size:10px; font-weight:700; color:var(--accent-blue); letter-spacing:.06em; }
+    .insight-body { font-size:11px; font-weight:500; color:var(--text-title); line-height:1.45; }
+    .chart-header { display:flex; align-items:center; justify-content:space-between; }
+    .chart-watts { font-size:11px; font-weight:700; color:var(--emerald); }
+    .chart-wrap { flex:1; display:flex; gap:6px; min-height:0; overflow:hidden; }
+    .chart-yaxis { display:flex; flex-direction:column; justify-content:space-between; padding:4px 0 28px; flex-shrink:0; }
+    .chart-yaxis span { font-size:9.5px; color:var(--text-label); text-align:right; width:26px; }
+    .chart-canvas { flex:1; background:var(--canvas-bg); border:1px solid var(--divider); border-radius:6px; position:relative; overflow:hidden; min-width:0; }
+    .chart-svg { width:100%; height:100%; display:block; }
+    .chart-legend { display:flex; gap:16px; padding-top:4px; flex-shrink:0; }
+    .legend-item { font-size:10.5px; font-weight:600; display:flex; align-items:center; gap:5px; }
+    .statusbar { display:flex; align-items:center; justify-content:space-between; background:var(--card-bg); border-top:1px solid var(--card-border); padding:7px 20px; flex-shrink:0; }
+    .status-left  { font-size:10.5px; font-weight:600; color:var(--emerald); }
+    .status-right { font-size:10.5px; color:var(--text-label); }
+  </style>
+</head>
+<body>
+<div class="window">
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-info">
+      <h1>ADAPTIVE POWER GOVERNOR</h1>
+      <p>AMD Ryzen 5 PRO 2400G &nbsp;·&nbsp; Win32 Kernel Driver</p>
+    </div>
+    <div class="btn-settings">⚙ Settings</div>
+    <div class="badge-pill">● AUTONOMOUS: DEEP ECO 70%</div>
+  </div>
+
+  <!-- BODY -->
+  <div class="body">
+    <!-- LEFT CARD -->
+    <div class="card card-left">
+      <div class="section-row">
+        <span class="section-title">System Telemetry</span>
+        <span class="realtime-tag">● REAL-TIME</span>
+      </div>
+      <div class="metric-tiles">
+        <div class="metric-tile">
+          <div class="metric-val" style="color:var(--text-title)">2,100 MHz</div>
+          <div class="metric-lbl">HARDWARE CLOCK</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-val" style="color:var(--cyan)">8%</div>
+          <div class="metric-lbl">CPU LOAD</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-val" style="color:var(--emerald)">70% CAP</div>
+          <div class="metric-lbl">GOVERNOR STATE</div>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="eq-header">
+        <span class="section-title">Energy Savings Equation</span>
+        <span class="eq-today">₹0.02 today (at ₹3.50/unit ✎)</span>
+      </div>
+      <div class="eq-row">
+        <div class="eq-card eq-amber">
+          <div class="eq-val" style="color:var(--amber)">18.2 W</div>
+          <div class="eq-lbl">WITHOUT GOVERNOR</div>
+          <div class="eq-sub" style="color:var(--amber)">100% Baseline</div>
+        </div>
+        <div class="eq-op">−</div>
+        <div class="eq-card eq-green">
+          <div class="eq-val" style="color:var(--emerald)">14.1 W</div>
+          <div class="eq-lbl">ACTUAL DRAW</div>
+          <div class="eq-sub" style="color:var(--emerald)">Governed Cap</div>
+        </div>
+        <div class="eq-op">=</div>
+        <div class="eq-card eq-cyan">
+          <div class="eq-val" style="color:var(--cyan)">+4.1 W</div>
+          <div class="eq-lbl">TOTAL SAVED</div>
+          <div class="eq-sub" style="color:var(--cyan)">Instant Saved</div>
+        </div>
+      </div>
+      <div class="runtime">Active runtime: 5m &nbsp;·&nbsp; Eco efficiency: 100%</div>
+      <div class="insight">
+        <div class="insight-head">GOVERNOR INSIGHT</div>
+        <div class="insight-body">Idle condition sustained (8% load). Deep 70% power reduction active. CPU clock gated to 2,100 MHz — saving approximately 4.1W continuously.</div>
+      </div>
+    </div>
+
+    <!-- RIGHT CARD -->
+    <div class="card card-right">
+      <div class="chart-header">
+        <span class="section-title">Power Consumption Trace (60s)</span>
+        <span class="chart-watts">[14.1 W]</span>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-yaxis">
+          <span>65W</span>
+          <span>45W</span>
+          <span>30W</span>
+          <span>15W</span>
+          <span>&nbsp;</span>
+        </div>
+        <div class="chart-canvas">
+          <svg class="chart-svg" viewBox="0 0 370 210" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="fg" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#10B981" stop-opacity="0.38"/>
+                <stop offset="100%" stop-color="#10B981" stop-opacity="0.03"/>
+              </linearGradient>
+            </defs>
+            <line x1="0" y1="55"  x2="370" y2="55"  stroke="#1A283C" stroke-width="1" stroke-dasharray="4,4"/>
+            <line x1="0" y1="105" x2="370" y2="105" stroke="#1A283C" stroke-width="1" stroke-dasharray="4,4"/>
+            <line x1="0" y1="158" x2="370" y2="158" stroke="#1A283C" stroke-width="1" stroke-dasharray="4,4"/>
+            <polyline points="0,148 40,147 80,149 120,148 160,146 200,148 240,147 280,148 320,149 370,148" fill="none" stroke="#F59E0B" stroke-width="1.5" stroke-dasharray="5,4" opacity="0.85"/>
+            <polygon points="0,210 0,162 20,160 40,157 60,155 80,159 100,165 120,163 140,160 160,157 180,159 200,162 220,164 240,161 260,158 280,160 300,163 320,161 340,159 370,161 370,210" fill="url(#fg)"/>
+            <polyline points="0,162 20,160 40,157 60,155 80,159 100,165 120,163 140,160 160,157 180,159 200,162 220,164 240,161 260,158 280,160 300,163 320,161 340,159 370,161" fill="none" stroke="#10B981" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+        </div>
+      </div>
+      <div class="chart-legend">
+        <div class="legend-item" style="color:var(--emerald)"><span>●</span> Actual Draw (14.1 W)</div>
+        <div class="legend-item" style="color:var(--amber)"><span>◌</span> Without Governor (18.2 W)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STATUS BAR -->
+  <div class="statusbar">
+    <span class="status-left">🛡 Autonomous Governor Active &nbsp;·&nbsp; 100% Baseline Guaranteed on Exit</span>
+    <span class="status-right">Sampling: 1000ms &nbsp;·&nbsp; Close to Minimize to Tray</span>
+  </div>
+</div>
+</body>
+</html>
