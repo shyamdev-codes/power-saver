@@ -1,0 +1,5 @@
+/target
+*.exe
+recovery_journal.json
+daily_energy_log.csv
+ai_docs/
